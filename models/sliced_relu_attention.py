@@ -99,10 +99,6 @@ class SlicedReLUSelfAttention(nn.Module):
         # normalized
         q_proj = q_centered / std
         k_proj = k_centered / std
-    
-        # final safety: zero padded again
-        q_proj = q_proj * proj_mask
-        k_proj = k_proj * proj_mask
 
         Z = torch.cat((k_proj, q_proj), dim=1)
         Z = Z.view(B, 2 * T, H, 1).permute(0, 2, 1, 3)
