@@ -1,14 +1,25 @@
-from transformers import RobertaModel, RobertaTokenizer, RobertaConfig, RobertaPreTrainedModel#, RobertaEmbeddings
+"""
+Transformer encoder compatible with Hugging Face, with pluggable attention kernels.
+
+- Uses RoBERTa embeddings / config for easy HF integration.
+- Replaces the standard RobertaEncoder stack with custom layers.
+- Returns BaseModelOutput(last_hidden_state=...).
+"""
+
+
+from transformers import RobertaModel, RobertaPreTrainedModel
 from transformers.modeling_outputs import BaseModelOutput
 import torch
 import torch.nn as nn
 
-from .sliced_relu_attention import *
-from .softmax_attention import *
-from .sliced_relu_bump_attention import *
+from .sliced_relu_attention import SlicedReLUSelfAttention
+from .softmax_attention import SoftmaxSelfAttention
+from .sliced_relu_bump_attention import SlicedReLUBumpSelfAttention
 
 
 class TransformerLayer(nn.Module):
+    """Pre-LN Transformer block: LN -> Attention -> residual, then LN -> FFN -> residual."""
+
     def __init__(self, config, attention_module):
         super().__init__()
         self.attn = attention_module
@@ -37,9 +48,17 @@ class TransformerLayer(nn.Module):
     
 
 class TransformerEncoder(RobertaPreTrainedModel):
+    """
+    HF-compatible encoder that reuses RoBERTa embeddings but swaps the attention mechanism.
+
+    Config fields used:
+      - attention_type: {"softmax", "sliced_relu", "sliced_relu_bump"}
+      - use_rope: bool (if True, disable absolute position embeddings)
+    """
+
     def __init__(self, config):
         super().__init__(config)
-        self.roberta = RobertaModel(config, add_pooling_layer=False)
+        self.roberta = RobertaModel(config, add_pooling_layer=False) 
 
         self.attention_type = getattr(config, "attention_type", "softmax")
 
@@ -54,7 +73,7 @@ class TransformerEncoder(RobertaPreTrainedModel):
                 pos_emb.weight.zero_()
         # ------
 
-        # Remove unused Roberta encoder
+        # Remove unused Roberta encoder, we provide our own encoder stack below
         del self.roberta.encoder
 
         self.encoder = nn.ModuleList()
@@ -75,7 +94,10 @@ class TransformerEncoder(RobertaPreTrainedModel):
         self.post_init()
 
     def _embed_no_abs_pos(self, input_ids):
+        # Reproduce RobertaEmbeddings but without adding position_embeddings
+        # Needed when use_rope=True
         # Manual path: word → (token_type if present) → LN → dropout
+
         emb = self.roberta.embeddings
         x = emb.word_embeddings(input_ids)                     # [B, T, H]
 
@@ -107,85 +129,5 @@ class TransformerEncoder(RobertaPreTrainedModel):
         for layer in self.encoder:
             hidden_states = layer(hidden_states, attention_mask)
 
-        hidden_states = self.final_layernorm(hidden_states)
-        return BaseModelOutput(last_hidden_state=hidden_states)
-        
-        
-        
-class PointCloudTransformerEncoder(RobertaPreTrainedModel):
-    """
-    Point-wise transformer backbone for point clouds, replacing token embeddings with a point MLP: (x, y, z) -> hidden_size.
-
-    Inputs:
-      points: (B, N, 3)
-      attention_mask: optional (B, N)
-    """
-
-    def __init__(self, config):
-        super().__init__(config)
-
-        self.use_rope = bool(getattr(config, "use_rope", False))
-
-        self.attention_type = getattr(config, "attention_type", "softmax")
-
-        hidden_size = config.hidden_size
-        ln_eps = config.layer_norm_eps
-        dropout_p = config.hidden_dropout_prob
-
-        # ----- Point-wise embedding: (x,y,z) → hidden_size -----
-        self.point_embedding = nn.Sequential(
-            nn.Linear(3, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, hidden_size),
-        )
-        self.input_layernorm = nn.LayerNorm(hidden_size, eps=ln_eps)
-        self.input_dropout = nn.Dropout(dropout_p)
-
-        # ----- Encoder stack (reuses your CustomRobertaLayer + attention modules) -----
-        self.encoder = nn.ModuleList()
-        for _ in range(config.num_hidden_layers):
-            if self.attention_type == "softmax":
-                attention = SoftmaxSelfAttention(config, use_rope=self.use_rope)
-            elif self.attention_type == "sliced_relu":
-                attention = SlicedReLUSelfAttention(config, use_rope=self.use_rope)
-            elif self.attention_type == "sliced_relu_bump":
-                attention = SlicedReLUBumpSelfAttention(config, use_rope=self.use_rope)
-            else:
-                raise ValueError(f"Unknown attention_type={self.attention_type!r}! Use softmax, sliced_relu, or sliced_relu_bump.")
-
-            self.encoder.append(TransformerLayer(config, attention))
-
-        self.final_layernorm = nn.LayerNorm(hidden_size, eps=ln_eps)
-
-        # Hugging Face weight init
-        self.post_init()
-
-    def forward(self, points, attention_mask=None):
-        """
-        points: (B, N, 3)
-        attention_mask: optional (B, N) with 1=keep, 0=mask (like HF)
-        returns: (B, N, hidden_size)
-        """
-
-        # Point-wise embedding
-        # (B, N, 3) -> (B, N, H)
-        hidden_states = self.point_embedding(points)
-        hidden_states = self.input_layernorm(hidden_states)
-        hidden_states = self.input_dropout(hidden_states)
-
-        # Attention mask formatting
-        if attention_mask is not None:
-            if self.attention_type == "softmax":
-                # Softmax-style attention: transform to large negative mask
-                attention_mask = attention_mask[:, None, None, :]
-                attention_mask = (1.0 - attention_mask) * -10000.0
-        else:
-            attention_mask = None
-
-        # Encoder stack 
-        for layer in self.encoder:
-            hidden_states = layer(hidden_states, attention_mask)
-
-        # Final layernorm 
         hidden_states = self.final_layernorm(hidden_states)
         return BaseModelOutput(last_hidden_state=hidden_states)

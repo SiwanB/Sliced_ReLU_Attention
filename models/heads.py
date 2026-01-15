@@ -17,21 +17,6 @@ class CLSPooling(nn.Module):
         return hidden_states[:, 0] 
     
 
-class SequenceClassificationHead(nn.Module):
-    def __init__(self, hidden_size: int, num_labels: int, dropout: float):
-        super().__init__()
-        self.dropout = nn.Dropout(dropout)
-
-        mlp_hidden = 4*hidden_size  
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_size, mlp_hidden),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(mlp_hidden, num_labels)
-        )
-
-    def forward(self, pooled):
-        return self.classifier(self.dropout(pooled))
     
 
 class TransformerForSequenceClassification(nn.Module):

@@ -29,7 +29,7 @@ def build_model():
     # Custom flags 
     config.use_rope = True
 
-    config.attention_type = "sliced_relu"
+    config.attention_type = "sliced_relu_bump"
 
     model = TransformerEncoder(config)
 

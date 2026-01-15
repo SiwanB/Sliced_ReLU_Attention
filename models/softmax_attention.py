@@ -1,11 +1,15 @@
+# Standard softmax attention
 import torch
 import torch.nn as nn
 
 from .rope import apply_rope
 
 class SoftmaxSelfAttention(nn.Module):
+    """Standard scaled dot-product attention (multi-head)."""
+
     def __init__(self, config, use_rope=False):
         super().__init__()
+        self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
         self.head_dim = config.hidden_size // config.num_attention_heads
         self.all_head_size = self.num_heads * self.head_dim
@@ -27,6 +31,7 @@ class SoftmaxSelfAttention(nn.Module):
         k = self.transpose_for_scores(self.key(hidden_states))
         v = self.transpose_for_scores(self.value(hidden_states))
 
+        # Positional encoding: RoPE
         if self.use_rope:
             q, k = apply_rope(q, k)
 
