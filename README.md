@@ -1,2 +1,8 @@
 # Sliced_ReLU_Attention
-A Transformer implementation with sliced ReLU attention, sliced ReLU bump attention, and softmax attention.
+
+This repertory contains a PyTorch implementation of Sliced ReLU attention mechanisms.
+
+## Paper:
+
+You will find our paper here: https://arxiv.org/abs/2512.11411
+
