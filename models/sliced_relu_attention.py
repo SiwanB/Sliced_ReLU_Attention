@@ -88,12 +88,11 @@ class SlicedReLUSelfAttention(nn.Module):
         count = proj_mask.sum(dim=1, keepdim=True).clamp(min=1.0)
 
         # masked means
-        mean_q = (q_proj.sum(dim=1, keepdim=True)) / count
-        mean_k = (k_proj.sum(dim=1, keepdim=True)) / count
+        mean_qk = 0.5*(q_proj.sum(dim=1, keepdim=True) + k_proj.sum(dim=1, keepdim=True)) / count
 
         # centered
-        q_centered = q_proj - mean_q
-        k_centered = k_proj - mean_k
+        q_centered = q_proj - mean_qk
+        k_centered = k_proj - mean_qk
 
         # masked variance
         var_q = ((q_centered ** 2).sum(dim=1, keepdim=True)) / count
